@@ -1,0 +1,58 @@
+defaults:
+  - _self_
+  - run: proposed-opendde-openfold3
+
+# Execution mode: sanity, pilot, or full
+mode: full
+
+# Results output directory
+results_dir: .research/results
+
+wandb:
+  entity: wkumagai
+  project: opendde-multinode-foldbench
+  mode: online
+
+# Raise the epoch count without redefining what `mode: full` means. null keeps
+# the mode's own value (full = 30).
+epochs: null
+
+# Epochs at which to write an intermediate checkpoint, so a long run can be
+# scored while it is still running. Empty keeps only the final one.
+#
+# A YAML list rather than "1,2,4": Hydra reads a bare comma-separated override
+# as an ambiguous list and refuses to start, so the string form cannot survive
+# being passed back on the command line by a launcher.
+checkpoint_at: [1, 2, 4, 8, 16, 32]
+
+# The shape-complementarity term of OpenDDE's pre-training objective
+# (arXiv:2607.03787, Section A.2.1):
+#
+#   L_shape = pair_weight  * Huber(q_uv,     q*_uv)
+#           + token_weight * Huber(q_u,      q*_u)
+#           + global_weight* Huber(q_global, q*_global)
+#
+# and the harness optimises L_diff + lambda_shape * L_shape.
+#
+# lambda_shape is the one number the report does not publish, so it is a knob
+# rather than a constant. lambda_shape: 0.0 does not merely zero the term, it
+# stops it being evaluated at all -- that setting is the diffusion-only control
+# and reproduces the previous harness exactly, same graph and same RNG draws.
+#
+# The three sub-weights are not guesses: OpenDDE ships them, attached to these
+# same three fields, in opendde/config/model_base.py under confidence.shape_comp.
+# The field's geometry (interface cutoff, gap mean, clash distance, ...) is read
+# straight out of that section at run time and is deliberately not repeated here.
+shape_loss:
+  lambda_shape: 1.0
+  pair_weight: 0.4
+  token_weight: 1.0
+  global_weight: 0.4
+  # Huber transition point. The fields are scores in [0, 1], so 1.0 keeps the
+  # loss quadratic over their whole range; drop it to engage the linear regime.
+  huber_delta: 1.0
+  # Optional hard noise cutoff in angstroms, on top of the continuous c_skip
+  # weight that always applies. 0 disables it. Set it to 4.82 -- the median of
+  # the training schedule, sigma_data * exp(p_mean) -- for the ablation that
+  # restricts the term to the low-noise half of the samples.
+  sigma_max: 0.0

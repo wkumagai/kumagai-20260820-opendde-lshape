@@ -1,0 +1,4 @@
+- mode=full
+- run.python_bin=/usr/bin/python3
+- shape_loss.lambda_shape=0.0
+- shape_loss.sigma_max=4.82
