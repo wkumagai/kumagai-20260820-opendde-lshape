@@ -113,6 +113,7 @@ def main(cfg: DictConfig) -> None:
         "--expect-nodes", str(overrides.get("expect_nodes", cfg.run.expect_nodes)),
         "--verdict-prefix", VERDICT_PREFIX[mode],
         "--checkpoint-at", _checkpoint_at(cfg),
+        "--ema-decay", str(cfg.get("ema_decay", 0.0) or 0.0),
         "--lambda-shape", str(cfg.shape_loss.lambda_shape),
         "--shape-pair-weight", str(cfg.shape_loss.pair_weight),
         "--shape-token-weight", str(cfg.shape_loss.token_weight),
