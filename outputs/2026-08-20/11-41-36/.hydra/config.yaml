@@ -1,0 +1,26 @@
+mode: full
+results_dir: .research/results
+wandb:
+  entity: wkumagai
+  project: opendde-multinode-foldbench
+  mode: online
+epochs: 12
+n_entries: 1000
+checkpoint_at: []
+shape_loss:
+  lambda_shape: 0.0
+  pair_weight: 0.4
+  token_weight: 1.0
+  global_weight: 0.4
+  huber_delta: 1.0
+  sigma_max: 0.0
+chain_perm: true
+ema_decay: 0.0
+run:
+  run_id: arm-all
+  opendde_root: /data1/rkp00041/plinder_lddt_pli_improvement/model/opendde_data
+  checkpoint: /data1/rkp00041/plinder_lddt_pli_improvement/model/opendde_data/checkpoint/opendde.pt
+  cache_dir: /data1/rkp00041/rku00121/cache_all/sft
+  python_bin: /usr/bin/python3
+  lr: 0.0001
+  expect_nodes: 4

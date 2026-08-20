@@ -81,6 +81,12 @@ def main(cfg: DictConfig) -> None:
     # every past run that named it.
     if cfg.get("epochs"):
         overrides["epochs"] = int(cfg.epochs)
+    # Same reasoning for the entry count. Without this the table above caps
+    # `full` at 30 examples, so a run pointed at a 377-example cache would
+    # silently train on 30 of them and the cache would look like it had no
+    # effect -- the failure mode where the knob is set and does nothing.
+    if cfg.get("n_entries"):
+        overrides["n_entries"] = int(cfg.n_entries)
 
     results_dir = Path(str(cfg.results_dir)) / str(cfg.run.run_id)
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -114,6 +120,7 @@ def main(cfg: DictConfig) -> None:
         "--verdict-prefix", VERDICT_PREFIX[mode],
         "--checkpoint-at", _checkpoint_at(cfg),
         "--ema-decay", str(cfg.get("ema_decay", 0.0) or 0.0),
+        "--chain-perm", "1" if cfg.get("chain_perm", False) else "0",
         "--lambda-shape", str(cfg.shape_loss.lambda_shape),
         "--shape-pair-weight", str(cfg.shape_loss.pair_weight),
         "--shape-token-weight", str(cfg.shape_loss.token_weight),

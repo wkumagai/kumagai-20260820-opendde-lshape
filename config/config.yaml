@@ -17,13 +17,23 @@ wandb:
 # the mode's own value (full = 30).
 epochs: null
 
-# Epochs at which to write an intermediate checkpoint, so a long run can be
-# scored while it is still running. Empty keeps only the final one.
+# Likewise for the number of cached examples to train on. null keeps the mode's
+# own value (full = 30), which is the size of the original hetero-only cache and
+# nothing more principled than that.
+n_entries: null
+
+# Epochs at which to write an intermediate checkpoint. EMPTY ON PURPOSE.
+#
+# Each checkpoint is a 2.6 GB state_dict and EMA doubles that, so the six
+# epochs this used to list cost 31 GB per run. Five runs in parallel filled
+# the shared 1 TiB project quota to 99.93% and every one of them died inside
+# torch.save -- the training itself was fine. An intermediate checkpoint is
+# only worth its disk when something is going to score it; nothing was.
 #
 # A YAML list rather than "1,2,4": Hydra reads a bare comma-separated override
 # as an ambiguous list and refuses to start, so the string form cannot survive
 # being passed back on the command line by a launcher.
-checkpoint_at: [1, 2, 4, 8, 16, 32]
+checkpoint_at: []
 
 # The shape-complementarity term of OpenDDE's pre-training objective
 # (arXiv:2607.03787, Section A.2.1):
@@ -56,6 +66,19 @@ shape_loss:
   # the training schedule, sigma_data * exp(p_mean) -- for the ablation that
   # restricts the term to the low-noise half of the samples.
   sigma_max: 0.0
+
+# Chain-permutation-aware labelling for homodimers.
+#
+# A homodimer's two chains carry the same sequence, so the model's inputs are
+# symmetric under exchanging them and no amount of training can tell it which
+# deposited chain goes where. Against one fixed assignment it is punished half
+# the time for a structure that is right. With two identical chains the
+# permutation group has two elements, so the exact fix is a min over two
+# candidate labellings -- no search, no extra forward pass (AF3 supplement 4.2).
+#
+# Off by default so that a cache carrying permutations still reproduces the
+# fixed-assignment arm exactly. It does nothing at all on a hetero-only cache.
+chain_perm: false
 
 # Exponential moving average of the trainable weights, as AF3 uses for
 # inference. 0 disables it. AF3's 0.999 assumes thousands of steps; this run

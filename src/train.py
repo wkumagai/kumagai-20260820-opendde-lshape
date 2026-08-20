@@ -106,6 +106,11 @@ PART_KEYS = (
     "shape_global",
     "shape_sigma_weight",
     "shape_samples",
+    # Fraction of noised copies whose loss was lower under the swapped chain
+    # labelling. 0 would mean the permutation term is inert and the run is the
+    # same as one without it; near 0.5 means the model genuinely cannot tell the
+    # two chains apart, which is the case the term exists for.
+    "perm_swap_rate",
 )
 
 # Fixed rather than configurable: the cluster runs one job per node, so no other
@@ -402,6 +407,10 @@ def diffusion_loss(
 
     x_denoised, x_gt: [N_sample, N_atom, 3]; sigma: [N_sample];
     atom_mask, weight_per_atom: [N_atom].
+
+    Returns the loss PER SAMPLE, [N_sample]; the caller reduces it. Per-sample
+    because the chain-permutation choice is made independently for each noised
+    copy -- a scalar leaves nothing to take the minimum over.
     """
     mask = atom_mask[None, :].to(x_denoised.dtype)
     x_gt_aligned = weighted_rigid_align(x_denoised.detach(), x_gt, mask)
@@ -412,7 +421,7 @@ def diffusion_loss(
 
     # EDM loss weighting: (sigma^2 + sigma_data^2) / (sigma * sigma_data)^2
     edm_w = (sigma**2 + SIGMA_DATA**2) / (sigma * SIGMA_DATA) ** 2
-    return (edm_w * mean_sq).mean()
+    return edm_w * mean_sq
 
 
 def atom_type_weights(feat: dict[str, Any], device: torch.device) -> torch.Tensor:
@@ -757,6 +766,7 @@ def train_step(
     chunk_size: int | None,
     shape_field_config: dict[str, Any] | None = None,
     shape_weights: dict[str, float] | None = None,
+    chain_perm: bool = False,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """One optimizer-free forward/backward-ready step.
 
@@ -785,6 +795,15 @@ def train_step(
     coord = example["coordinate"].to(device)
     mask = example["coordinate_mask"].to(device)
 
+    # Chain-permutation labelling. `perm` is an involution over atom indices
+    # (preprocess.build_chain_permutation), so `mask & mask[perm]` is itself
+    # permutation-invariant and one mask can serve both assignments. The price
+    # is the atoms resolved under only one of the two chains, a few percent.
+    perm = example.get("chain_perm") if chain_perm else None
+    if perm is not None:
+        perm = perm.to(device)
+        mask = mask & mask[perm]
+
     x_gt = centre_random_augmentation(coord, N_sample=n_sample, mask=mask)
     sigma = sample_noise_level(n_sample, device)
     x_noisy = x_gt + sigma[:, None, None] * torch.randn_like(x_gt)
@@ -802,10 +821,31 @@ def train_step(
         inplace_safe=False,
         chunk_size=chunk_size,
     )
-    loss_diff = diffusion_loss(
-        x_denoised, x_gt, sigma, mask, atom_type_weights(feat, device)
-    )
-    parts = {"loss_diff": float(loss_diff.detach()), "loss_shape": 0.0}
+    # The permutation is resolved against the prediction, not before it: the
+    # noised input already commits to one labelling, so at low noise the min
+    # picks that one back and only at high noise -- where the input carries too
+    # little of the structure to say which chain is which -- can the swap win.
+    w_atom = atom_type_weights(feat, device)
+    per_perm = [diffusion_loss(x_denoised, x_gt, sigma, mask, w_atom)]
+    if perm is not None:
+        x_gt_swapped = x_gt[:, perm]
+        per_perm.append(
+            diffusion_loss(x_denoised, x_gt_swapped, sigma, mask, w_atom)
+        )
+    stacked = torch.stack(per_perm)  # [n_perm, n_sample]
+    chosen = stacked.argmin(dim=0)  # [n_sample]
+    loss_diff = stacked.gather(0, chosen[None]).squeeze(0).mean()
+    parts = {
+        "loss_diff": float(loss_diff.detach()),
+        "loss_shape": 0.0,
+        "perm_swap_rate": float(chosen.float().mean()),
+    }
+    if perm is not None:
+        # The shape term reads the ground truth too, so it has to be told the
+        # same assignment the diffusion term settled on. Anything else would
+        # score the two halves of the objective against different labels.
+        keep = chosen.bool()[:, None, None]
+        x_gt = torch.where(keep, x_gt_swapped, x_gt)
 
     # Nothing about the shape term is evaluated when it is switched off, so
     # lambda_shape=0.0 returns the identical tensor from the identical graph and
@@ -1140,6 +1180,7 @@ def run(args: argparse.Namespace) -> int:
                 args.n_cycle, args.n_sample, args.chunk_size,
                 shape_field_config=shape_field_config,
                 shape_weights=shape_weights,
+                chain_perm=args.chain_perm,
             )
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(trainable, args.grad_clip)
@@ -1413,6 +1454,15 @@ def main() -> None:
     parser.add_argument("--shape-huber-delta", type=float, default=1.0)
     # 0 disables the hard cutoff and leaves only the continuous c_skip weight.
     parser.add_argument("--shape-sigma-max", type=float, default=0.0)
+    # Chain-permutation-aware labelling for homodimers. Off reproduces the
+    # fixed-assignment behaviour exactly, including on a cache that carries
+    # permutations, so the two arms differ in this and nothing else.
+    # argparse applies `type` before `choices`, so a converted bool would never
+    # match a list of strings: the accepted spellings live in the converter.
+    parser.add_argument(
+        "--chain-perm", default=False,
+        type=lambda v: str(v).strip().lower() in {"1", "true", "yes", "on"},
+    )
     parser.add_argument("--min-steps", type=int, default=5)
     parser.add_argument("--expect-nodes", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)

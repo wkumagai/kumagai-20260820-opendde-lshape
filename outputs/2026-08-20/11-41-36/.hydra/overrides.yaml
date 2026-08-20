@@ -1,0 +1,9 @@
+- mode=full
+- epochs=12
+- n_entries=1000
+- chain_perm=true
+- ema_decay=0.0
+- shape_loss.lambda_shape=0.0
+- run.run_id=arm-all
+- run.cache_dir=/data1/rkp00041/rku00121/cache_all/sft
+- run.python_bin=/usr/bin/python3

@@ -1,0 +1,57 @@
+# Arm H of the training-composition comparison: homodimers admitted.
+#
+# FoldBench's protein-protein split is 200/279 homomeric interfaces and the
+# training cache was 100% heterodimeric, so the majority of the test
+# distribution had never been shown to the model. The exclusion existed because
+# a homodimer's two chains are interchangeable and a fixed label assignment
+# trains toward an arbitrary one; src/preprocess.build_chain_permutation now
+# supplies the swap and src/train takes the min over the two assignments, which
+# is the exact answer for a two-element permutation group (AF3 supplement 4.2).
+#
+# 389 usable entries (229 homo + 160 hetero) / 16 ranks = 25 steps per epoch,
+# so 12 epochs buys 300 -- the same 300 steps/rank as arm T. Matching the steps
+# rather than the epochs is what makes the difference attributable to the data
+# pool instead of to how much optimisation each arm got.
+# Base Dockerfile for AIRAS ML Experiments
+# This provides a reproducible environment for all experiment stages
+
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv package manager
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Set working directory
+WORKDIR /workspace
+
+# Copy dependency files
+COPY pyproject.toml ./
+# Copy uv.lock if it exists (wildcard makes it optional)
+COPY uv.lock* ./
+
+# Install Python dependencies using uv
+# This layer will be cached unless dependencies change
+RUN uv sync --frozen || uv sync
+
+# Copy the rest of the application
+COPY . .
+
+# Create results directory
+RUN mkdir -p .research/results
+
+# The execution platform runs this CMD verbatim when the image is built from a
+# committed Dockerfile, so it must invoke the experiment rather than a shell.
+# A CMD of ["bash"] exits 0 with no work done and is reported as a success.
+CMD ["uv", "run", "python", "-u", "-m", "src.main", "mode=full", "epochs=12", "n_entries=1000", "chain_perm=true", "ema_decay=0.0", "shape_loss.lambda_shape=0.0", "run.run_id=arm-all", "run.cache_dir=/data1/rkp00041/rku00121/cache_all/sft"]
